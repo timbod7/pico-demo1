@@ -4,10 +4,10 @@
 #![no_std]
 #![no_main]
 
-use bsp::entry;
+use bsp::{entry, hal::pio::PinState};
 use defmt::*;
 use defmt_rtt as _;
-use embedded_hal::digital::v2::OutputPin;
+use embedded_hal::digital::v2::{InputPin, OutputPin};
 use panic_probe as _;
 
 // Embed the `Hz` function/trait:
@@ -36,6 +36,15 @@ use embedded_graphics::{
 
 use display_interface_spi::SPIInterface;
 use ili9341::{Ili9341, Orientation};
+
+type Display = Ili9341<
+    SPIInterface<
+        spi::Spi<spi::Enabled, pac::SPI1, 8>,
+        gpio::Pin<gpio::bank0::Gpio15, gpio::Output<gpio::PushPull>>,
+        gpio::Pin<gpio::bank0::Gpio13, gpio::Output<gpio::PushPull>>,
+    >,
+    gpio::Pin<gpio::bank0::Gpio14, gpio::Output<gpio::PushPull>>,
+>;
 
 #[entry]
 fn main() -> ! {
@@ -69,7 +78,7 @@ fn main() -> ! {
     );
 
     let mut led_pin = pins.led.into_push_pull_output();
-    let mut display = {
+    let mut display: Display = {
         let cs = pins.gpio13.into_push_pull_output();
         let dc = pins.gpio15.into_push_pull_output();
         let reset = pins.gpio14.into_push_pull_output();
@@ -93,16 +102,13 @@ fn main() -> ! {
         )
         .unwrap()
     };
+    let in1_pin = pins.gpio16.into_pull_up_input();
 
     let character_style = MonoTextStyle::new(&profont::PROFONT_24_POINT, Rgb565::WHITE);
     let text_style = TextStyle::with_baseline(Baseline::Top);
     let black_fill = PrimitiveStyleBuilder::new()
         .fill_color(Rgb565::BLACK)
         .build();
-    let green_fill = PrimitiveStyleBuilder::new()
-        .fill_color(Rgb565::GREEN)
-        .build();
-
     let test_text = "Pixel Blinky";
 
     Rectangle::new(Point::new(0, 0), Size::new(320, 240))
@@ -114,28 +120,50 @@ fn main() -> ! {
         .draw(&mut display)
         .unwrap();
 
-    let circle_size: u32 = 30;
-    let circle_at = Point::new(
-        ((display.size().width - circle_size) / 2) as i32,
-        ((display.size().height - circle_size) / 2) as i32,
-    );
+    let mut blink = false;
 
     loop {
-        info!("on!");
-        led_pin.set_high().unwrap();
-        Circle::new(circle_at, circle_size)
-            .into_styled(green_fill)
-            .draw(&mut display)
-            .unwrap();
+        if blink {
+            led_pin.set_high().unwrap();
+        } else {
+            led_pin.set_low().unwrap();
+        }
+        render_indicator(&mut display, Point::new(120, 120), blink);
+        render_indicator(
+            &mut display,
+            Point::new(180, 120),
+            in1_pin.is_high().unwrap(),
+        );
 
+        blink = !blink;
         delay.delay_ms(500);
-        info!("off!");
-        led_pin.set_low().unwrap();
-        Circle::new(circle_at, circle_size)
-            .into_styled(black_fill)
-            .draw(&mut display)
+    }
+}
+
+fn render_indicator(display: &mut Display, centre: Point, state: bool) -> () {
+    let led_size: u32 = 30;
+    let led_at = Point::new(
+        centre.x - (led_size as i32) / 2,
+        centre.y - (led_size as i32) / 2,
+    );
+
+    let grey_fill = PrimitiveStyleBuilder::new()
+        .fill_color(Rgb565::CSS_DARK_GRAY)
+        .build();
+    let green_fill = PrimitiveStyleBuilder::new()
+        .fill_color(Rgb565::GREEN)
+        .build();
+
+    if state {
+        Circle::new(led_at, led_size)
+            .into_styled(green_fill)
+            .draw(display)
             .unwrap();
-        delay.delay_ms(500);
+    } else {
+        Circle::new(led_at, led_size)
+            .into_styled(grey_fill)
+            .draw(display)
+            .unwrap();
     }
 }
 
