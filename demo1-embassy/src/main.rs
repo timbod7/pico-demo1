@@ -4,8 +4,9 @@
 
 use core::cell::RefCell;
 use defmt::*;
+use display::Display;
 use embassy_executor::Spawner;
-use embassy_rp::{gpio, peripherals, spi};
+use embassy_rp::{gpio, peripherals};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::signal::Signal;
@@ -13,25 +14,14 @@ use embassy_time::{Duration, Timer};
 use gpio::{Input, Level, Output, Pull};
 use {defmt_rtt as _, panic_probe as _};
 
-use display_interface_spi::SPIInterface;
-use ili9341::{Ili9341, Orientation};
-
 use embedded_graphics::{
-    mono_font::MonoTextStyle,
-    pixelcolor::Rgb565,
     prelude::*,
+    pixelcolor::Rgb565,
     primitives::{Circle, PrimitiveStyleBuilder, Rectangle},
-    text::{Baseline, Text, TextStyle},
+    text::Text,
 };
 
-type Display = Ili9341<
-    SPIInterface<
-        embassy_rp::spi::Spi<'static, peripherals::SPI1, embassy_rp::spi::Blocking>,
-        Output<'static, peripherals::PIN_15>,
-        Output<'static, peripherals::PIN_13>,
-    >,
-    Output<'static, peripherals::PIN_14>,
->;
+mod display;
 
 type LedOutput = Output<'static, peripherals::PIN_25>;
 type ButtonInput = Input<'static, peripherals::PIN_16>;
@@ -44,32 +34,9 @@ async fn main(spawner: Spawner) {
     let led: LedOutput = Output::new(p.PIN_25, Level::Low);
     let button: ButtonInput = Input::new(p.PIN_16, Pull::Up);
 
-    let miso = p.PIN_12;
-    let mosi = p.PIN_11;
-    let clk = p.PIN_10;
-    let cs = Output::new(p.PIN_13, Level::High);
-    let reset = Output::new(p.PIN_14, Level::Low);
-    let dc = Output::new(p.PIN_15, Level::Low);
-
-    let display_spi = {
-        let mut config = spi::Config::default();
-        config.frequency = 16_000_000;
-        config.polarity = spi::Polarity::IdleLow;
-        config.phase = spi::Phase::CaptureOnFirstTransition;
-        spi::Spi::new_blocking(p.SPI1, clk, mosi, miso, config)
-    };
-
-    let display: Display = {
-        let mut delay = embassy_time::Delay {};
-        Ili9341::new(
-            SPIInterface::new(display_spi, dc, cs),
-            reset,
-            &mut delay,
-            Orientation::LandscapeFlipped,
-            ili9341::DisplaySize240x320,
-        )
-        .unwrap()
-    };
+    let display = display::init(
+        p.PIN_12, p.PIN_11, p.PIN_10, p.PIN_13, p.PIN_14, p.PIN_15, p.SPI1,
+    );
 
     unwrap!(spawner.spawn(blinker(led, Duration::from_millis(500))));
     unwrap!(spawner.spawn(button_monitor(button)));
@@ -132,21 +99,21 @@ where
 }
 
 fn render_background(display: &mut Display) {
-    let character_style = MonoTextStyle::new(&profont::PROFONT_24_POINT, Rgb565::WHITE);
-    let text_style = TextStyle::with_baseline(Baseline::Top);
-    let black_fill = PrimitiveStyleBuilder::new()
-        .fill_color(Rgb565::BLACK)
-        .build();
     let test_text = "Pixel Blinky";
 
     Rectangle::new(Point::new(0, 0), Size::new(320, 240))
-        .into_styled(black_fill)
-        .draw(display)
+        .into_styled(display.styles.black_fill)
+        .draw(&mut display.interface)
         .unwrap();
 
-    Text::with_text_style(test_text, Point::new(60, 0), character_style, text_style)
-        .draw(display)
-        .unwrap();
+    Text::with_text_style(
+        test_text,
+        Point::new(60, 0),
+        display.styles.char,
+        display.styles.text,
+    )
+    .draw(&mut display.interface)
+    .unwrap();
 }
 
 /// Draw an "LED" on the LCD display
@@ -157,22 +124,23 @@ fn render_indicator(display: &mut Display, centre: Point, state: bool) -> () {
         centre.y - (led_size as i32) / 2,
     );
 
-    let grey_fill = PrimitiveStyleBuilder::new()
-        .fill_color(Rgb565::CSS_DARK_GRAY)
-        .build();
-    let green_fill = PrimitiveStyleBuilder::new()
-        .fill_color(Rgb565::GREEN)
-        .build();
-
     if state {
         Circle::new(led_at, led_size)
-            .into_styled(green_fill)
-            .draw(display)
+            .into_styled(
+                PrimitiveStyleBuilder::new()
+                    .fill_color(Rgb565::GREEN)
+                    .build(),
+            )
+            .draw(&mut display.interface)
             .unwrap();
     } else {
         Circle::new(led_at, led_size)
-            .into_styled(grey_fill)
-            .draw(display)
+            .into_styled(
+                PrimitiveStyleBuilder::new()
+                    .fill_color(Rgb565::CSS_DARK_GRAY)
+                    .build(),
+            )
+            .draw(&mut display.interface)
             .unwrap();
     }
 }
