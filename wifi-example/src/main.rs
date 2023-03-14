@@ -5,14 +5,13 @@
 #![allow(incomplete_features)]
 
 use core::cell::RefCell;
-use core::convert::Infallible;
 
 use defmt::*;
 use embassy_executor::Spawner;
 use embassy_net::tcp::TcpSocket;
 use embassy_net::{Config, Stack, StackResources, StaticConfig, Ipv4Cidr};
 use embassy_rp::gpio::{Flex, Level, Output};
-use embassy_rp::peripherals::{PIN_23, PIN_24, PIN_25, PIN_29};
+use embassy_rp::peripherals::{PIN_23, PIN_25};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::signal::Signal;
@@ -20,14 +19,16 @@ use embassy_time::{Duration, Timer};
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
 use embedded_graphics::text::Text;
-use embedded_hal_1::spi::ErrorType;
-use embedded_hal_async::spi::{ExclusiveDevice, SpiBusFlush, SpiBusRead, SpiBusWrite};
+use embedded_hal_async::spi::{ExclusiveDevice};
 use embedded_io::asynch::Write;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 use heapless::String;
 use ufmt::uwrite;
 
+use wifi_spi::WifiSpi;
+
+mod wifi_spi;
 mod display;
 
 macro_rules! singleton {
@@ -40,7 +41,7 @@ macro_rules! singleton {
 
 #[embassy_executor::task]
 async fn wifi_task(
-    runner: cyw43::Runner<'static, Output<'static, PIN_23>, ExclusiveDevice<MySpi, Output<'static, PIN_25>>>,
+    runner: cyw43::Runner<'static, Output<'static, PIN_23>, ExclusiveDevice<WifiSpi, Output<'static, PIN_25>>>,
 ) -> ! {
     runner.run().await
 }
@@ -73,7 +74,7 @@ async fn main(spawner: Spawner) {
     dio.set_low();
     dio.set_as_output();
 
-    let bus = MySpi { clk, dio };
+    let bus = WifiSpi { clk, dio };
     let spi = ExclusiveDevice::new(bus, cs);
 
     let state = singleton!(cyw43::State::new());
@@ -170,81 +171,6 @@ async fn main(spawner: Spawner) {
         }
 
         display_state_update(|ds| ds.connected = false);
-    }
-}
-
-
-
-struct MySpi {
-    /// SPI clock
-    clk: Output<'static, PIN_29>,
-
-    /// 4 signals, all in one!!
-    /// - SPI MISO
-    /// - SPI MOSI
-    /// - IRQ
-    /// - strap to set to gSPI mode on boot.
-    dio: Flex<'static, PIN_24>,
-}
-
-impl ErrorType for MySpi {
-    type Error = Infallible;
-}
-
-impl SpiBusFlush for MySpi {
-    async fn flush(&mut self) -> Result<(), Self::Error> {
-        Ok(())
-    }
-}
-
-impl SpiBusRead<u32> for MySpi {
-    async fn read(&mut self, words: &mut [u32]) -> Result<(), Self::Error> {
-        self.dio.set_as_input();
-        for word in words {
-            let mut w = 0;
-            for _ in 0..32 {
-                w = w << 1;
-
-                // rising edge, sample data
-                if self.dio.is_high() {
-                    w |= 0x01;
-                }
-                self.clk.set_high();
-
-                // falling edge
-                self.clk.set_low();
-            }
-            *word = w
-        }
-
-        Ok(())
-    }
-}
-
-impl SpiBusWrite<u32> for MySpi {
-    async fn write(&mut self, words: &[u32]) -> Result<(), Self::Error> {
-        self.dio.set_as_output();
-        for word in words {
-            let mut word = *word;
-            for _ in 0..32 {
-                // falling edge, setup data
-                self.clk.set_low();
-                if word & 0x8000_0000 == 0 {
-                    self.dio.set_low();
-                } else {
-                    self.dio.set_high();
-                }
-
-                // rising edge
-                self.clk.set_high();
-
-                word = word << 1;
-            }
-        }
-        self.clk.set_low();
-
-        self.dio.set_as_input();
-        Ok(())
     }
 }
 
