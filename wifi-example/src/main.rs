@@ -9,7 +9,7 @@ use core::cell::RefCell;
 use defmt::*;
 use embassy_executor::Spawner;
 use embassy_net::tcp::TcpSocket;
-use embassy_net::{Config, Stack, StackResources, StaticConfig, Ipv4Cidr};
+use embassy_net::{Config, Stack, StackResources, StaticConfig, Ipv4Cidr, IpAddress};
 use embassy_rp::gpio::{Flex, Level, Output};
 use embassy_rp::peripherals::{PIN_23, PIN_25};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
@@ -124,7 +124,7 @@ async fn main(spawner: Spawner) {
     unwrap!(spawner.spawn(display_refresh(display)));
     display_state_update(|ds| {
         ds.ssid = ssid;
-        ds.connected = false;
+        ds.connected = None;
     });
 
     let config = wait_for_config(stack).await;
@@ -144,7 +144,7 @@ async fn main(spawner: Spawner) {
 
         info!("Received connection from {:?}", socket.remote_endpoint());
 
-        display_state_update(|ds| ds.connected = true);
+        display_state_update(|ds| ds.connected = socket.remote_endpoint().map(|ep| ep.addr));
 
         loop {
             let n = match socket.read(&mut buf).await {
@@ -170,7 +170,7 @@ async fn main(spawner: Spawner) {
             };
         }
 
-        display_state_update(|ds| ds.connected = false);
+        display_state_update(|ds| ds.connected = None);
     }
 }
 
@@ -187,14 +187,14 @@ async fn wait_for_config(stack: &'static Stack<cyw43::NetDriver<'static>>) -> St
 struct DisplayState {
     address: Option<Ipv4Cidr>,
     ssid: &'static str,
-    connected: bool,
+    connected: Option<IpAddress>,
 }
 
 static DISPLAY_STATE: Mutex<ThreadModeRawMutex, RefCell<DisplayState>> =
     Mutex::new(RefCell::new(DisplayState {
         address: Option::None,
         ssid: "???",
-        connected: false,
+        connected: None,
     }));
 
 static DISPLAY_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
@@ -221,7 +221,7 @@ async fn display_refresh(mut display: display::Display) {
 
         Text::with_text_style(
             "Wifi demo",
-            Point::new(60, 0),
+            Point::new(14, 0),
             display.styles.char,
             display.styles.text,
         )
@@ -231,36 +231,47 @@ async fn display_refresh(mut display: display::Display) {
         let state = DISPLAY_STATE.lock(|s| s.borrow().clone());
         Text::with_text_style(
             state.ssid,
-            Point::new(60, 24),
+            Point::new(14, 14),
             display.styles.char,
             display.styles.text,
         )
         .draw(&mut display.interface)
         .unwrap();
 
-        let mut dhcp = String::<32>::new();
-        match state.address {
-            Some(addr) => uwrite!(dhcp, "{}.{}.{}.{}", addr.address().0[0], addr.address().0[1], addr.address().0[2], addr.address().0[3]),
-            None => uwrite!(dhcp, "awaiting DHCP..."),
-        }.unwrap();
+        {
+            let mut dhcp = String::<32>::new();
+            match state.address {
+                Some(addr) => uwrite!(dhcp, "{}.{}.{}.{}", addr.address().0[0], addr.address().0[1], addr.address().0[2], addr.address().0[3]),
+                None => uwrite!(dhcp, "awaiting DHCP..."),
+            }.unwrap();
 
-        Text::with_text_style(
-            &dhcp, 
-            Point::new(60, 48),
-            display.styles.char,
-            display.styles.text,
-        )
-        .draw(&mut display.interface)
-        .unwrap();
+            Text::with_text_style(
+                &dhcp, 
+                Point::new(14, 28),
+                display.styles.char,
+                display.styles.text,
+            )
+            .draw(&mut display.interface)
+            .unwrap();
+        }
 
-        Text::with_text_style(
-            if state.connected {"client connected"} else {"awaiting..."},
-            Point::new(60, 96),
-            display.styles.char,
-            display.styles.text,
-        )
-        .draw(&mut display.interface)
-        .unwrap();
+        {
+            let mut client = String::<32>::new();
+            match state.connected {
+                Some(IpAddress::Ipv4(addr)) => {
+                    uwrite!(client, "client: {}.{}.{}.{}", addr.0[0], addr.0[1], addr.0[2], addr.0[3])
+                }
+                None => uwrite!(client, "accepting..."),
+            }.unwrap();
+            Text::with_text_style(
+                &client,
+                Point::new(14, 56),
+                display.styles.char,
+                display.styles.text,
+            )
+            .draw(&mut display.interface)
+            .unwrap();
+        }
     }
 }
 

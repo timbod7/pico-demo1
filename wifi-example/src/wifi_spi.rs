@@ -7,14 +7,14 @@ use embedded_hal_async::spi::{SpiBusFlush, SpiBusRead, SpiBusWrite};
 
 pub struct WifiSpi {
   /// SPI clock
-  clk: Output<'static, PIN_29>,
+  pub clk: Output<'static, PIN_29>,
 
   /// 4 signals, all in one!!
   /// - SPI MISO
   /// - SPI MOSI
   /// - IRQ
   /// - strap to set to gSPI mode on boot.
-  dio: Flex<'static, PIN_24>,
+  pub dio: Flex<'static, PIN_24>,
 }
 
 impl ErrorType for WifiSpi {

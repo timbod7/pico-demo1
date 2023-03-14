@@ -41,7 +41,7 @@ pub fn init(
 
     let display_spi = {
         let mut config = spi::Config::default();
-        config.frequency = 16_000_000;
+        config.frequency = 32_000_000;
         config.polarity = spi::Polarity::IdleLow;
         config.phase = spi::Phase::CaptureOnFirstTransition;
         spi::Spi::new_blocking(spi, clk, mosi, miso, config)
@@ -74,7 +74,7 @@ pub struct Styles {
 
 impl Styles {
     fn new() -> Styles {
-        let char = MonoTextStyle::new(&profont::PROFONT_24_POINT, Rgb565::WHITE);
+        let char = MonoTextStyle::new(&profont::PROFONT_14_POINT, Rgb565::WHITE);
         let text = TextStyle::with_baseline(Baseline::Top);
         let black_fill = PrimitiveStyleBuilder::new()
             .fill_color(Rgb565::BLACK)
