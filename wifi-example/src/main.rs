@@ -4,19 +4,31 @@
 #![feature(async_fn_in_trait)]
 #![allow(incomplete_features)]
 
+use core::cell::RefCell;
 use core::convert::Infallible;
 
 use defmt::*;
 use embassy_executor::Spawner;
 use embassy_net::tcp::TcpSocket;
-use embassy_net::{Config, Stack, StackResources};
+use embassy_net::{Config, Stack, StackResources, StaticConfig, Ipv4Cidr};
 use embassy_rp::gpio::{Flex, Level, Output};
 use embassy_rp::peripherals::{PIN_23, PIN_24, PIN_25, PIN_29};
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
+use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::signal::Signal;
+use embassy_time::{Duration, Timer};
+use embedded_graphics::prelude::*;
+use embedded_graphics::primitives::Rectangle;
+use embedded_graphics::text::Text;
 use embedded_hal_1::spi::ErrorType;
 use embedded_hal_async::spi::{ExclusiveDevice, SpiBusFlush, SpiBusRead, SpiBusWrite};
 use embedded_io::asynch::Write;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
+use heapless::String;
+use ufmt::uwrite;
+
+mod display;
 
 macro_rules! singleton {
     ($val:expr) => {{
@@ -40,7 +52,6 @@ async fn net_task(stack: &'static Stack<cyw43::NetDriver<'static>>) -> ! {
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
-    info!("Hello World!");
 
     let p = embassy_rp::init(Default::default());
 
@@ -76,7 +87,10 @@ async fn main(spawner: Spawner) {
         .await;
 
     //control.join_open(env!("WIFI_NETWORK")).await;
-    control.join_wpa2(env!("WIFI_NETWORK"), env!("WIFI_PASSWORD")).await;
+    let ssid = env!("WIFI_NETWORK");
+    let password =  env!("WIFI_PASSWORD");
+
+    control.join_wpa2(ssid, password).await;
 
     let config = Config::Dhcp(Default::default());
     //let config = embassy_net::Config::Static(embassy_net::Config {
@@ -104,6 +118,19 @@ async fn main(spawner: Spawner) {
     let mut tx_buffer = [0; 4096];
     let mut buf = [0; 4096];
 
+    // Keep the display up to date
+    let display = display::init(p.PIN_12, p.PIN_11, p.PIN_10, p.PIN_13, p.PIN_14, p.PIN_15, p.SPI1);
+    unwrap!(spawner.spawn(display_refresh(display)));
+    display_state_update(|ds| {
+        ds.ssid = ssid;
+        ds.connected = false;
+    });
+
+    let config = wait_for_config(stack).await;
+    display_state_update(|ds| {
+        ds.address = Some(config.address);
+    });
+
     loop {
         let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
         socket.set_timeout(Some(embassy_net::SmolDuration::from_secs(10)));
@@ -115,6 +142,8 @@ async fn main(spawner: Spawner) {
         }
 
         info!("Received connection from {:?}", socket.remote_endpoint());
+
+        display_state_update(|ds| ds.connected = true);
 
         loop {
             let n = match socket.read(&mut buf).await {
@@ -139,8 +168,12 @@ async fn main(spawner: Spawner) {
                 }
             };
         }
+
+        display_state_update(|ds| ds.connected = false);
     }
 }
+
+
 
 struct MySpi {
     /// SPI clock
@@ -214,3 +247,94 @@ impl SpiBusWrite<u32> for MySpi {
         Ok(())
     }
 }
+
+async fn wait_for_config(stack: &'static Stack<cyw43::NetDriver<'static>>) -> StaticConfig {
+    loop {
+        if let Some(config) = stack.config() {
+            return config.clone();
+        }
+        Timer::after(Duration::from_millis(500)).await;
+    }
+}
+
+#[derive(Clone)]
+struct DisplayState {
+    address: Option<Ipv4Cidr>,
+    ssid: &'static str,
+    connected: bool,
+}
+
+static DISPLAY_STATE: Mutex<ThreadModeRawMutex, RefCell<DisplayState>> =
+    Mutex::new(RefCell::new(DisplayState {
+        address: Option::None,
+        ssid: "???",
+        connected: false,
+    }));
+
+static DISPLAY_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+fn display_state_update<F>(mut sfn: F)
+where
+    F: FnMut(&mut DisplayState) -> (),
+{
+    DISPLAY_STATE.lock(|s| sfn(&mut s.borrow_mut()));
+    DISPLAY_SIGNAL.signal(());
+}
+
+
+// Keep the display up to date
+#[embassy_executor::task]
+async fn display_refresh(mut display: display::Display) {
+    loop {
+        DISPLAY_SIGNAL.wait().await;
+
+        Rectangle::new(Point::zero(), display.interface.size())
+        .into_styled(display.styles.black_fill)
+        .draw(&mut display.interface)
+        .unwrap();
+
+        Text::with_text_style(
+            "Wifi demo",
+            Point::new(60, 0),
+            display.styles.char,
+            display.styles.text,
+        )
+        .draw(&mut display.interface)
+        .unwrap();
+
+        let state = DISPLAY_STATE.lock(|s| s.borrow().clone());
+        Text::with_text_style(
+            state.ssid,
+            Point::new(60, 24),
+            display.styles.char,
+            display.styles.text,
+        )
+        .draw(&mut display.interface)
+        .unwrap();
+
+        let mut dhcp = String::<32>::new();
+        match state.address {
+            Some(addr) => uwrite!(dhcp, "{}.{}.{}.{}", addr.address().0[0], addr.address().0[1], addr.address().0[2], addr.address().0[3]),
+            None => uwrite!(dhcp, "awaiting DHCP..."),
+        }.unwrap();
+
+        Text::with_text_style(
+            &dhcp, 
+            Point::new(60, 48),
+            display.styles.char,
+            display.styles.text,
+        )
+        .draw(&mut display.interface)
+        .unwrap();
+
+        Text::with_text_style(
+            if state.connected {"client connected"} else {"awaiting..."},
+            Point::new(60, 96),
+            display.styles.char,
+            display.styles.text,
+        )
+        .draw(&mut display.interface)
+        .unwrap();
+    }
+}
+
