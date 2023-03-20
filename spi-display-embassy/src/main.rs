@@ -23,7 +23,7 @@ use crate::my_display_interface::SPIDeviceInterface;
 use crate::shared_spi::SpiDeviceWithCs;
 use crate::touch::Touch;
 
-//const DISPLAY_FREQ: u32 = 64_000_000;
+const DISPLAY_FREQ: u32 = 16_000_000;
 const TOUCH_FREQ: u32 = 200_000;
 
 #[embassy_executor::main]
@@ -42,15 +42,16 @@ async fn main(_spawner: Spawner) {
 
     // create SPI
     let mut config = spi::Config::default();
-    config.frequency = TOUCH_FREQ; // use the lowest freq
+    config.frequency = TOUCH_FREQ; // start with the lowest freq
     config.phase = spi::Phase::CaptureOnSecondTransition;
     config.polarity = spi::Polarity::IdleHigh;
 
     let spi: Spi<'_, _, Blocking> = Spi::new_blocking(p.SPI1, clk, mosi, miso, config);
     let spi_bus = RefCell::new(spi);
 
-    let display_spi = SpiDeviceWithCs::new(&spi_bus, Output::new(display_cs, Level::High));
-    let touch_spi = SpiDeviceWithCs::new(&spi_bus, Output::new(touch_cs, Level::High));
+    let display_spi =
+        SpiDeviceWithCs::new(&spi_bus, Output::new(display_cs, Level::High), DISPLAY_FREQ);
+    let touch_spi = SpiDeviceWithCs::new(&spi_bus, Output::new(touch_cs, Level::High), TOUCH_FREQ);
 
     let mut touch = Touch::new(touch_spi);
 
@@ -112,6 +113,8 @@ mod shared_spi {
     use embedded_hal_1::spi;
     use embedded_hal_1::spi::SpiDevice;
 
+    use crate::SpiSetFrequency;
+
     #[derive(Copy, Clone, Eq, PartialEq, Debug)]
     pub enum SpiDeviceWithCsError<BUS, CS> {
         #[allow(unused)] // will probably use in the future when adding a flush() to SpiBus
@@ -135,11 +138,12 @@ mod shared_spi {
     pub struct SpiDeviceWithCs<'a, BUS, CS> {
         bus: &'a RefCell<BUS>,
         cs: CS,
+        freq: u32,
     }
 
     impl<'a, BUS, CS> SpiDeviceWithCs<'a, BUS, CS> {
-        pub fn new(bus: &'a RefCell<BUS>, cs: CS) -> Self {
-            Self { bus, cs }
+        pub fn new(bus: &'a RefCell<BUS>, cs: CS, freq: u32) -> Self {
+            Self { bus, cs, freq }
         }
     }
 
@@ -153,7 +157,7 @@ mod shared_spi {
 
     impl<'a, BUS, CS> SpiDevice for SpiDeviceWithCs<'a, BUS, CS>
     where
-        BUS: spi::SpiBusFlush,
+        BUS: spi::SpiBusFlush + SpiSetFrequency,
         CS: OutputPin,
     {
         type Bus = BUS;
@@ -163,6 +167,7 @@ mod shared_spi {
             f: impl FnOnce(&mut Self::Bus) -> Result<R, BUS::Error>,
         ) -> Result<R, Self::Error> {
             let mut bus = self.bus.borrow_mut();
+            bus.set_frequency(self.freq);
             self.cs.set_low().map_err(SpiDeviceWithCsError::Cs)?;
 
             let f_res = f(&mut bus);
@@ -392,5 +397,15 @@ mod my_display_interface {
             }
             _ => unimplemented!(),
         }
+    }
+}
+
+pub trait SpiSetFrequency {
+    fn set_frequency(&mut self, freq: u32);
+}
+
+impl<'d, T: embassy_rp::spi::Instance, M: embassy_rp::spi::Mode> SpiSetFrequency for Spi<'d, T, M> {
+    fn set_frequency(&mut self, freq: u32) {
+        self.set_frequency(freq);
     }
 }
