@@ -1,6 +1,5 @@
 #![no_std]
 #![no_main]
-#![feature(type_alias_impl_trait)]
 
 use core::cell::RefCell;
 use defmt::*;
@@ -15,8 +14,8 @@ use gpio::{Input, Level, Output, Pull};
 use {defmt_rtt as _, panic_probe as _};
 
 use embedded_graphics::{
-    prelude::*,
     pixelcolor::Rgb565,
+    prelude::*,
     primitives::{Circle, PrimitiveStyleBuilder, Rectangle},
     text::Text,
 };
