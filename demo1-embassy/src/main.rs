@@ -43,17 +43,15 @@ async fn main(spawner: Spawner) {
     let spi_bus = SPI_BUS.init(NoopMutex::new(RefCell::new(init_my_spi_bus(
         p.PIN_12, p.PIN_11, p.PIN_10, p.SPI1,
     ))));
-    let display_spi = SpiDeviceWithConfig::new(
-        spi_bus,
-        Output::new(p.PIN_13, Level::High),
-        init_display_spi_config(),
-    );
 
-    let di = hardware::display_interface::SPIDeviceInterface::new(
-        display_spi,
-        Output::new(p.PIN_15, Level::Low),
-    );
     let display: MyDisplay = {
+        let spi_device = SpiDeviceWithConfig::new(
+            spi_bus,
+            Output::new(p.PIN_13, Level::High),
+            init_display_spi_config(),
+        );
+        let di =
+            display_interface_spi::SPIInterface::new(spi_device, Output::new(p.PIN_15, Level::Low));
         let mut delay = embassy_time::Delay {};
         Ili9341::new(
             di,
