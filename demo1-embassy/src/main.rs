@@ -1,17 +1,18 @@
 #![no_std]
 #![no_main]
 
+use crate::hardware::{ButtonInput, LedOutput};
 use core::cell::RefCell;
 use defmt::*;
 use embassy_embedded_hal::shared_bus::blocking::spi::SpiDeviceWithConfig;
 use embassy_executor::Spawner;
-use embassy_rp::{gpio, peripherals};
-use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
-use embassy_sync::blocking_mutex::{Mutex, NoopMutex};
-use embassy_sync::signal::Signal;
+use embassy_rp::gpio;
+use embassy_sync::blocking_mutex::NoopMutex;
 use embassy_time::{Duration, Timer};
 use gpio::{Input, Level, Output, Pull};
 use static_cell::StaticCell;
+use utils::StateAndSignal;
+
 use {defmt_rtt as _, panic_probe as _};
 
 use embedded_graphics::{
@@ -28,9 +29,7 @@ use hardware::{init_display_spi_config, init_my_spi_bus, MyDisplay, MySpiBus};
 
 mod display;
 mod hardware;
-
-type LedOutput = Output<'static, peripherals::PIN_25>;
-type ButtonInput = Input<'static, peripherals::PIN_16>;
+mod utils;
 
 static SPI_BUS: StaticCell<NoopMutex<RefCell<MySpiBus>>> = StaticCell::new();
 
@@ -66,7 +65,7 @@ async fn main(spawner: Spawner) {
     let led: LedOutput = Output::new(p.PIN_25, Level::Low);
     let button: ButtonInput = Input::new(p.PIN_16, Pull::Up);
 
-    unwrap!(spawner.spawn(blinker(led, Duration::from_millis(500))));
+    unwrap!(spawner.spawn(blinker(led, Duration::from_millis(200))));
     unwrap!(spawner.spawn(button_monitor(button)));
     unwrap!(spawner.spawn(display_refresh(display)));
 }
@@ -77,7 +76,7 @@ async fn blinker(mut led: LedOutput, interval: Duration) {
     let mut blink = false;
     loop {
         led.set_level(if blink { Level::Low } else { Level::High });
-        display_state_update(|s| s.indicator1 = blink);
+        DISPLAY_STATE.update(|s| s.indicator1 = blink);
         blink = !blink;
         Timer::after(interval).await;
     }
@@ -89,7 +88,7 @@ async fn button_monitor(mut button: ButtonInput) {
     loop {
         button.wait_for_any_edge().await;
         let level = button.get_level();
-        display_state_update(|s| s.indicator2 = level == Level::High);
+        DISPLAY_STATE.update(|s| s.indicator2 = level == Level::High);
     }
 }
 
@@ -99,12 +98,10 @@ struct DisplayState {
     indicator2: bool,
 }
 
-static DISPLAY_STATE: Mutex<ThreadModeRawMutex, RefCell<DisplayState>> =
-    Mutex::new(RefCell::new(DisplayState {
-        indicator1: false,
-        indicator2: false,
-    }));
-static DISPLAY_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+static DISPLAY_STATE: StateAndSignal<DisplayState, ()> = StateAndSignal::new(DisplayState {
+    indicator1: false,
+    indicator2: false,
+});
 
 // Keep the display up to date
 #[embassy_executor::task]
@@ -112,19 +109,10 @@ async fn display_refresh(mut display: MyDisplay) {
     let styles = display::Styles::new();
     render_background(&mut display, &styles);
     loop {
-        DISPLAY_SIGNAL.wait().await;
-        let state = DISPLAY_STATE.lock(|s| s.borrow().clone());
+        let state = DISPLAY_STATE.wait(|_, s| s.clone()).await;
         render_indicator(&mut display, Point::new(120, 120), state.indicator1);
         render_indicator(&mut display, Point::new(180, 120), state.indicator2);
     }
-}
-
-fn display_state_update<F>(mut sfn: F)
-where
-    F: FnMut(&mut DisplayState) -> (),
-{
-    DISPLAY_STATE.lock(|s| sfn(&mut s.borrow_mut()));
-    DISPLAY_SIGNAL.signal(());
 }
 
 fn render_background(display: &mut MyDisplay, styles: &display::Styles) {

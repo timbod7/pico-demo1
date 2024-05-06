@@ -1,7 +1,13 @@
 use embassy_embedded_hal::shared_bus::blocking::spi::SpiDeviceWithConfig;
-use embassy_rp::{gpio::Output, peripherals, spi};
+use embassy_rp::{
+    gpio::{Input, Output},
+    peripherals, spi,
+};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use ili9341::Ili9341;
+
+pub type LedOutput = Output<'static, peripherals::PIN_25>;
+pub type ButtonInput = Input<'static, peripherals::PIN_16>;
 
 pub type MySpiBus = spi::Spi<'static, peripherals::SPI1, spi::Blocking>;
 
