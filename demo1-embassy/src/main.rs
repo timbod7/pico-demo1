@@ -109,7 +109,15 @@ async fn button_monitor(mut button: Input<'static>) {
 async fn touch_monitor(mut touch: MyTouch) {
     loop {
         Timer::after_millis(100).await;
-        let _ = touch.read();
+        if let Some((x, y)) = touch.read() {
+            let istate = match (x < 120, y < 160) {
+                (false, false) => IndicatorState::GRAY,
+                (false, true) => IndicatorState::GREEN,
+                (true, false) => IndicatorState::BLUE,
+                (true, true) => IndicatorState::RED,
+            };
+            DISPLAY_STATE.update(|s| s.indicator3 = istate);
+        }
     }
 }
 
@@ -117,6 +125,7 @@ async fn touch_monitor(mut touch: MyTouch) {
 struct DisplayState {
     indicator1: IndicatorState,
     indicator2: IndicatorState,
+    indicator3: IndicatorState,
 }
 
 #[derive(Clone, Copy)]
@@ -140,6 +149,7 @@ impl IndicatorState {
 static DISPLAY_STATE: StateAndSignal<DisplayState, ()> = StateAndSignal::new(DisplayState {
     indicator1: IndicatorState::GRAY,
     indicator2: IndicatorState::GRAY,
+    indicator3: IndicatorState::GRAY,
 });
 
 // Keep the display up to date
@@ -149,8 +159,9 @@ async fn display_refresh(mut display: MyDisplay) {
     render_background(&mut display, &styles);
     loop {
         let state = DISPLAY_STATE.wait(|_, s| s.clone()).await;
-        render_indicator(&mut display, Point::new(120, 120), state.indicator1);
-        render_indicator(&mut display, Point::new(180, 120), state.indicator2);
+        render_indicator(&mut display, Point::new(100, 120), state.indicator1);
+        render_indicator(&mut display, Point::new(160, 120), state.indicator2);
+        render_indicator(&mut display, Point::new(220, 120), state.indicator3);
     }
 }
 
