@@ -1,6 +1,6 @@
 [package]
 edition = "2021"
-name = "demo1-embassy"
+name = "display-embassy"
 version = "0.1.0"
 
 [dependencies]
