@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-use crate::hardware::{ButtonInput, LedOutput};
+use crate::hardware::{init_touch_spi_config, touch::Touch, ButtonInput, LedOutput, MyTouch};
 use core::cell::RefCell;
 use defmt::*;
 use embassy_embedded_hal::shared_bus::blocking::spi::SpiDeviceWithConfig;
@@ -62,11 +62,21 @@ async fn main(spawner: Spawner) {
         .unwrap()
     };
 
+    let touch = {
+        let spi_device = SpiDeviceWithConfig::new(
+            spi_bus,
+            Output::new(p.PIN_9, Level::High),
+            init_touch_spi_config(),
+        );
+        Touch::new(spi_device)
+    };
+
     let led: LedOutput = Output::new(p.PIN_25, Level::Low);
     let button: ButtonInput = Input::new(p.PIN_16, Pull::Up);
 
     unwrap!(spawner.spawn(blinker(led, Duration::from_millis(200))));
     unwrap!(spawner.spawn(button_monitor(button)));
+    unwrap!(spawner.spawn(touch_monitor(touch)));
     unwrap!(spawner.spawn(display_refresh(display)));
 }
 
@@ -76,7 +86,8 @@ async fn blinker(mut led: LedOutput, interval: Duration) {
     let mut blink = false;
     loop {
         led.set_level(if blink { Level::Low } else { Level::High });
-        DISPLAY_STATE.update(|s| s.indicator1 = blink);
+        let istate = IndicatorState::from_bool(blink);
+        DISPLAY_STATE.update(|s| s.indicator1 = istate);
         blink = !blink;
         Timer::after(interval).await;
     }
@@ -88,19 +99,47 @@ async fn button_monitor(mut button: ButtonInput) {
     loop {
         button.wait_for_any_edge().await;
         let level = button.get_level();
-        DISPLAY_STATE.update(|s| s.indicator2 = level == Level::High);
+        let istate = IndicatorState::from_bool(level == Level::High);
+        DISPLAY_STATE.update(|s| s.indicator2 = istate);
+    }
+}
+
+/// Monitor the touch screen, and show an indicator on the LCD display
+#[embassy_executor::task]
+async fn touch_monitor(mut touch: MyTouch) {
+    loop {
+        Timer::after_millis(100).await;
+        let _ = touch.read();
     }
 }
 
 #[derive(Clone)]
 struct DisplayState {
-    indicator1: bool,
-    indicator2: bool,
+    indicator1: IndicatorState,
+    indicator2: IndicatorState,
+}
+
+#[derive(Clone, Copy)]
+enum IndicatorState {
+    GRAY,
+    RED,
+    GREEN,
+    BLUE,
+}
+
+impl IndicatorState {
+    fn from_bool(v: bool) -> Self {
+        if v {
+            IndicatorState::GREEN
+        } else {
+            IndicatorState::GRAY
+        }
+    }
 }
 
 static DISPLAY_STATE: StateAndSignal<DisplayState, ()> = StateAndSignal::new(DisplayState {
-    indicator1: false,
-    indicator2: false,
+    indicator1: IndicatorState::GRAY,
+    indicator2: IndicatorState::GRAY,
 });
 
 // Keep the display up to date
@@ -127,30 +166,22 @@ fn render_background(display: &mut MyDisplay, styles: &display::Styles) {
 }
 
 /// Draw an "LED" on the LCD display
-fn render_indicator(display: &mut MyDisplay, centre: Point, state: bool) -> () {
+fn render_indicator(display: &mut MyDisplay, centre: Point, state: IndicatorState) -> () {
     let led_size: u32 = 30;
     let led_at = Point::new(
         centre.x - (led_size as i32) / 2,
         centre.y - (led_size as i32) / 2,
     );
 
-    if state {
-        Circle::new(led_at, led_size)
-            .into_styled(
-                PrimitiveStyleBuilder::new()
-                    .fill_color(Rgb565::GREEN)
-                    .build(),
-            )
-            .draw(display)
-            .unwrap();
-    } else {
-        Circle::new(led_at, led_size)
-            .into_styled(
-                PrimitiveStyleBuilder::new()
-                    .fill_color(Rgb565::CSS_DARK_GRAY)
-                    .build(),
-            )
-            .draw(display)
-            .unwrap();
-    }
+    let color = match state {
+        IndicatorState::GRAY => Rgb565::CSS_DARK_GRAY,
+        IndicatorState::RED => Rgb565::RED,
+        IndicatorState::GREEN => Rgb565::GREEN,
+        IndicatorState::BLUE => Rgb565::BLUE,
+    };
+
+    Circle::new(led_at, led_size)
+        .into_styled(PrimitiveStyleBuilder::new().fill_color(color).build())
+        .draw(display)
+        .unwrap();
 }
