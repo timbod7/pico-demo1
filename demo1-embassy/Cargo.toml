@@ -26,5 +26,12 @@ profont = "0.7.0"
 static_cell = "2"
 portable-atomic = { version = "1.5", features = ["critical-section"] }
 
+[patch.crates-io]
+embassy-executor = { git = "https://github.com/embassy-rs/embassy", rev = "15c3ae8ef6abaf37704e3278a1de6b2ae259aa15" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy", rev = "15c3ae8ef6abaf37704e3278a1de6b2ae259aa15" }
+embassy-rp = { git = "https://github.com/embassy-rs/embassy", rev = "15c3ae8ef6abaf37704e3278a1de6b2ae259aa15" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy", rev = "15c3ae8ef6abaf37704e3278a1de6b2ae259aa15" }
+embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy", rev = "15c3ae8ef6abaf37704e3278a1de6b2ae259aa15" }
+
 [profile.release]
 debug = 2

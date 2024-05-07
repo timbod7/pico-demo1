@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-use crate::hardware::{init_touch_spi_config, touch::Touch, ButtonInput, LedOutput, MyTouch};
+use crate::hardware::{init_touch_spi_config, touch::Touch, MyTouch};
 use core::cell::RefCell;
 use defmt::*;
 use embassy_embedded_hal::shared_bus::blocking::spi::SpiDeviceWithConfig;
@@ -71,8 +71,8 @@ async fn main(spawner: Spawner) {
         Touch::new(spi_device)
     };
 
-    let led: LedOutput = Output::new(p.PIN_25, Level::Low);
-    let button: ButtonInput = Input::new(p.PIN_16, Pull::Up);
+    let led = Output::new(p.PIN_25, Level::Low);
+    let button = Input::new(p.PIN_16, Pull::Up);
 
     unwrap!(spawner.spawn(blinker(led, Duration::from_millis(200))));
     unwrap!(spawner.spawn(button_monitor(button)));
@@ -82,7 +82,7 @@ async fn main(spawner: Spawner) {
 
 /// Blink the physical LED, and a matching indicator on the LCD display
 #[embassy_executor::task]
-async fn blinker(mut led: LedOutput, interval: Duration) {
+async fn blinker(mut led: Output<'static>, interval: Duration) {
     let mut blink = false;
     loop {
         led.set_level(if blink { Level::Low } else { Level::High });
@@ -95,7 +95,7 @@ async fn blinker(mut led: LedOutput, interval: Duration) {
 
 /// Monitor the button, and show an indicator on the LCD display
 #[embassy_executor::task]
-async fn button_monitor(mut button: ButtonInput) {
+async fn button_monitor(mut button: Input<'static>) {
     loop {
         button.wait_for_any_edge().await;
         let level = button.get_level();

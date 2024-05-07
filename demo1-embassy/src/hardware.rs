@@ -6,21 +6,13 @@ use embassy_rp::{
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use ili9341::Ili9341;
 
-pub type LedOutput = Output<'static, peripherals::PIN_25>;
-pub type ButtonInput = Input<'static, peripherals::PIN_16>;
-
 pub type MySpiBus = spi::Spi<'static, peripherals::SPI1, spi::Blocking>;
-type MySpiDevice<CS> = SpiDeviceWithConfig<'static, NoopRawMutex, MySpiBus, CS>;
+pub type MySpiDevice = SpiDeviceWithConfig<'static, NoopRawMutex, MySpiBus, Output<'static>>;
 
-pub type MyDisplay = Ili9341<
-    display_interface_spi::SPIInterface<
-        MySpiDevice<Output<'static, peripherals::PIN_13>>,
-        Output<'static, peripherals::PIN_15>,
-    >,
-    Output<'static, peripherals::PIN_14>,
->;
+pub type MyDisplay =
+    Ili9341<display_interface_spi::SPIInterface<MySpiDevice, Output<'static>>, Output<'static>>;
 
-pub type MyTouch = touch::Touch<MySpiDevice<Output<'static, peripherals::PIN_9>>>;
+pub type MyTouch = touch::Touch<MySpiDevice>;
 
 pub fn init_my_spi_bus(
     miso: peripherals::PIN_12,
